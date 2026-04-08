@@ -22,7 +22,7 @@ if 'db' not in st.session_state:
 def analyze_with_gemini(text, key):
     try:
         genai.configure(api_key=key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # Bản flash rất nhanh và miễn phí
+        model = genai.GenerativeModel('gemini-pro') # Bản flash rất nhanh và miễn phí
         
         prompt = f"""
         Phân tích câu chi tiêu sau: "{text}"
