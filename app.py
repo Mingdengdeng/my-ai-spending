@@ -1,100 +1,68 @@
 import streamlit as st
 import pandas as pd
-from openai import OpenAI
+import google.generativeai as genai
 import datetime
+import json
 
-# --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="AI Finance Pro", page_icon="💰", layout="wide")
+# --- CẤU HÌNH ---
+st.set_page_config(page_title="AI Spending Gemini", page_icon="💎", layout="wide")
 
-# Tùy chỉnh giao diện bằng CSS (làm cho giao diện "mượt" hơn)
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #4CAF50; color: white; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- KHỞI TẠO BỘ NHỚ (SESSION STATE) ---
-if 'db' not in st.session_state:
-    st.session_state.db = pd.DataFrame(columns=['Thời gian', 'Nội dung', 'Hạng mục', 'Số tiền'])
-
-# --- THANH BÊN (SIDEBAR) ---
 with st.sidebar:
     st.title("⚙️ Cấu hình")
-    api_key = st.text_input("Nhập OpenAI API Key", type="password")
-    st.info("AI sẽ tự động phân tích câu nói của bạn thành dữ liệu.")
-    
-    if st.button("Xóa lịch sử chi tiêu"):
+    gemini_key = st.text_input("Nhập Gemini API Key", type="password")
+    if st.button("Xóa lịch sử"):
         st.session_state.db = pd.DataFrame(columns=['Thời gian', 'Nội dung', 'Hạng mục', 'Số tiền'])
         st.rerun()
 
-# --- HÀM XỬ LÝ AI ---
-def analyze_spending(text, key):
-    client = OpenAI(api_key=key)
-    prompt = f"""
-    Bạn là một trợ lý tài chính. Phân tích câu: "{text}"
-    Trả về JSON với các trường:
-    - category: (Ăn uống, Di chuyển, Mua sắm, Giải trí, Tiền điện/nước, Khác)
-    - amount: (số tiền dạng số nguyên)
-    - desc: (nội dung ngắn gọn)
-    """
+# Khởi tạo dữ liệu
+if 'db' not in st.session_state:
+    st.session_state.db = pd.DataFrame(columns=['Thời gian', 'Nội dung', 'Hạng mục', 'Số tiền'])
+
+# --- HÀM XỬ LÝ VỚI GEMINI ---
+def analyze_with_gemini(text, key):
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={ "type": "json_object" }
-        )
-        import json
-        return json.loads(response.choices[0].message.content)
+        genai.configure(api_key=key)
+        model = genai.GenerativeModel('gemini-1.5-flash') # Bản flash rất nhanh và miễn phí
+        
+        prompt = f"""
+        Phân tích câu chi tiêu sau: "{text}"
+        Trả về JSON duy nhất với:
+        - category: (Ăn uống, Di chuyển, Mua sắm, Giải trí, Khác)
+        - amount: (số tiền dạng số nguyên)
+        - desc: (nội dung ngắn gọn)
+        Ví dụ: "Mì tôm 10k" -> {{"category": "Ăn uống", "amount": 10000, "desc": "Mì tôm"}}
+        """
+        
+        response = model.generate_content(prompt)
+        # Làm sạch chuỗi trả về để đảm bảo là JSON thuần túy
+        clean_json = response.text.replace('```json', '').replace('```', '').strip()
+        return json.loads(clean_json)
     except Exception as e:
-        st.error(f"Lỗi AI: {e}")
+        st.error(f"Lỗi Gemini: {e}")
         return None
 
-# --- GIAO DIỆN CHÍNH ---
-st.title("💰 Trợ Lý Quản Lý Chi Tiêu AI")
+# --- GIAO DIỆN ---
+st.title("💎 Quản Lý Chi Tiêu với Gemini AI")
 
-# Khu vực nhập liệu
-col_in, col_stat = st.columns([2, 1])
+user_input = st.text_input("Nhập chi tiêu của bạn:", placeholder="Ví dụ: Làm quán mì 1000 TWD")
 
-with col_in:
-    st.subheader("📝 Nhập chi tiêu")
-    user_input = st.text_input("Gõ câu gì đó (VD: Sáng nay ăn phở 45k, đi grab hết 30 ngàn...)", placeholder="Hôm nay bạn đã chi gì?")
-    btn_add = st.button("Tự động phân tích & Thêm ✨")
+if st.button("Phân tích ✨"):
+    if not gemini_key:
+        st.warning("Vui lòng nhập API Key từ Google AI Studio!")
+    elif user_input:
+        with st.spinner("Gemini đang xử lý..."):
+            res = analyze_with_gemini(user_input, gemini_key)
+            if res:
+                new_row = {
+                    'Thời gian': datetime.datetime.now().strftime("%d/%m/%Y"),
+                    'Nội dung': res['desc'],
+                    'Hạng mục': res['category'],
+                    'Số tiền': res['amount']
+                }
+                st.session_state.db = pd.concat([st.session_state.db, pd.DataFrame([new_row])], ignore_index=True)
+                st.success("Đã thêm thành công!")
 
-    if btn_add:
-        if not api_key:
-            st.error("Vui lòng nhập API Key ở thanh bên!")
-        elif user_input:
-            with st.spinner("AI đang tính toán..."):
-                res = analyze_spending(user_input, api_key)
-                if res:
-                    new_data = {
-                        'Thời gian': datetime.datetime.now().strftime("%H:%M - %d/%m/%Y"),
-                        'Nội dung': res['desc'],
-                        'Hạng mục': res['category'],
-                        'Số tiền': res['amount']
-                    }
-                    st.session_state.db = pd.concat([st.session_state.db, pd.DataFrame([new_data])], ignore_index=True)
-                    st.success(f"Đã thêm: {res['desc']} - {res['amount']:,}đ")
-
-with col_stat:
-    st.subheader("📊 Tổng quan")
-    total = st.session_state.db['Số tiền'].sum()
-    st.metric("Tổng chi tiêu", f"{total:,} VNĐ")
-    st.write(f"Số giao dịch: {len(st.session_state.db)}")
-
-# Khu vực hiển thị bảng và biểu đồ
 st.divider()
-tab1, tab2 = st.tabs(["📜 Nhật ký chi tiết", "📈 Biểu đồ phân tích"])
-
-with tab1:
-    st.dataframe(st.session_state.db, use_container_width=True)
-
-with tab2:
-    if not st.session_state.db.empty:
-        chart_data = st.session_state.db.groupby('Hạng mục')['Số tiền'].sum()
-        st.bar_chart(chart_data)
-        st.pie_chart(chart_data)
-    else:
-        st.write("Chưa có dữ liệu để vẽ biểu đồ.")
+st.dataframe(st.session_state.db, use_container_width=True)
+if not st.session_state.db.empty:
+    st.info(f"Tổng cộng: {st.session_state.db['Số tiền'].sum():,} đơn vị tiền tệ")
